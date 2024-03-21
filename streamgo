@@ -1,0 +1,97 @@
+package main
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"log"
+
+	"gocv.io/x/gocv"
+	"gocv.io/x/gocv/contrib"
+)
+
+func main() {
+	// load face detection and recognition models
+	faceCascade := gocv.NewCascadeClassifier()
+	defer faceCascade.Close()
+	if !faceCascade.Load("haarcascade_frontalface_default.xml") {
+		log.Fatal("Error reading face detection model")
+	}
+
+	recognizer := contrib.NewLBPHFaceRecognizer()
+	if !recognizer.Load("face_recognition_model.xml") {
+		log.Fatal("Error reading face recognition model")
+	}
+
+	// open video capture device
+	deviceID := 0 // use 0 for the default webcam, or use a different value for a different camera
+	cap, err := gocv.VideoCaptureDevice(deviceID)
+	if err != nil {
+		log.Fatal("Error opening video capture device")
+	}
+	defer cap.Close()
+
+	// create a window to display the live video stream
+	window := gocv.NewWindow("Face Recognition")
+	defer window.Close()
+
+	// loop through frames of the live video stream
+	frame := gocv.NewMat()
+	defer frame.Close()
+	for {
+		if ok := cap.Read(&frame); !ok {
+			log.Fatal("Error reading frame from video capture device")
+		}
+		if frame.Empty() {
+			continue
+		}
+
+		// detect faces in the current frame
+		faces := detectFaces(frame, faceCascade)
+
+		// recognize faces in the current frame
+		for _, face := range faces {
+			label, confidence := recognizer.Predict(face)
+			if label >= 0 {
+				// draw a rectangle around the recognized face
+				rect := face.Rectangle
+				gocv.Rectangle(&frame, rect, color.RGBA{255, 0, 0, 0}, 2)
+				// display the label and confidence level of the recognized face
+				text := fmt.Sprintf("Person %d (%f)", label, confidence)
+				gocv.PutText(&frame, text, image.Point{X: rect.Min.X, Y: rect.Min.Y - 5},
+					gocv.FontHersheyPlain, 1, color.RGBA{255, 0, 0, 0}, 2)
+			}
+		}
+
+		// show the live video stream with any recognized faces
+		window.IMShow(frame)
+		if window.WaitKey(1) >= 0 {
+			break
+		}
+	}
+
+	recognizer = nil // set recognizer to nil to release resources
+}
+
+func detectFaces(img gocv.Mat, cascade *gocv.CascadeClassifier) []gocv.Mat {
+	// convert image to grayscale
+	gray := gocv.NewMat()
+	defer gray.Close()
+	gocv.CvtColor(img, &gray, gocv.ColorBGRToGray)
+
+	// detect faces in the grayscale image
+	faces := cascade.DetectMultiScaleWithParams(
+		gray, 1.3, 5, 0, image.Point{X: 0, Y: 0}, image.Point{X: 0, Y: 0})
+
+	// extract faces from the grayscale image
+	var faceMats []gocv.Mat
+	for _, r := range faces {
+		faceMat := img.Region(r)
+		faceGray := gocv.NewMat()
+		defer faceGray.Close()
+		gocv.CvtColor(faceMat, &faceGray, gocv.ColorBGRToGray)
+		faceMats = append(faceMats, faceGray)
+	}
+
+	return faceMats
+}

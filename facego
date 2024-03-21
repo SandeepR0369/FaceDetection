@@ -1,0 +1,122 @@
+package main
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+
+	"gocv.io/x/gocv"
+	"gocv.io/x/gocv/contrib"
+)
+
+func main() {
+	// Load the face detection model
+	faceCascade := gocv.NewCascadeClassifier()
+	defer faceCascade.Close()
+
+	if !faceCascade.Load("haarcascade_frontalface_default.xml") {
+		fmt.Printf("Error loading face cascade file: %v\n", "haarcascade_frontalface_default.xml")
+		return
+	}
+
+	// Create the face recognizer
+	//rec := contrib.NewLBPHFaceRecognizer(1, 8, 8, 8, 100.0)
+	rec := contrib.NewLBPHFaceRecognizer()
+
+	// Train the recognizer with the provided face images and labels
+	faceImages := []gocv.Mat{
+		gocv.IMRead("face1.jpg", gocv.IMReadGrayScale),
+		gocv.IMRead("face2.jpg", gocv.IMReadGrayScale),
+	}
+
+	labels := []int32{0, 1}
+	labelsInt := convertToIntSlice(labels)
+	//rec.Train(inputs, labelsInt, numEpochs)
+
+	rec.Train(faceImages, labelsInt)
+
+	// Open the RTSP stream
+	stream, err := gocv.OpenVideoCapture("rtsp://your_rtsp_url")
+	if err != nil {
+		fmt.Printf("Error opening video capture: %v\n", err)
+		return
+	}
+	defer stream.Close()
+
+	// Create a window to display the output
+	window := gocv.NewWindow("Face recognition")
+	defer window.Close()
+
+	// Start reading frames from the RTSP stream
+	img := gocv.NewMat()
+	defer img.Close()
+
+	for {
+		if ok := stream.Read(&img); !ok {
+			fmt.Printf("Cannot read frame from video stream\n")
+			break
+		}
+
+		// Detect faces in the frame
+		faces := detectFaces(img, faceCascade)
+
+		// Draw rectangles around the detected faces
+		for _, face := range faces {
+			gocv.Rectangle(&img, face, color.RGBA{0, 255, 0, 0}, 2)
+		}
+
+		// Recognize faces in the frame
+		if len(faces) > 0 {
+			// Extract the face regions from the image
+			var faceRegions []gocv.Mat
+			for _, face := range faces {
+				faceRegions = append(faceRegions, img.Region(face))
+			}
+
+			// Recognize the faces
+			var labels []int32
+			var confidences []float32
+			for _, face := range faceRegions {
+				label, confidence := rec.Predict(face)
+				labels = append(labels, label)
+				confidences = append(confidences, confidence)
+			}
+
+			// Draw labels on the frame
+			for i, face := range faces {
+				label := fmt.Sprintf("Person %d", labels[i])
+				gocv.PutText(&img, label, image.Pt(face.Min.X, face.Min.Y-5), gocv.FontHersheyPlain, 1.5, color.RGBA{0, 255, 0, 0}, 2)
+			}
+		}
+
+		// Display the output
+		window.IMShow(img)
+		if window.WaitKey(1) >= 0 {
+			break
+		}
+	}
+}
+
+// detectFaces uses the provided faceCascade to detect faces in the image mat.
+// It returns a slice of rectangles representing the bounding boxes of the detected faces.
+// detectFaces uses the provided faceCascade to detect faces in the image mat.
+// It returns a slice of rectangles representing the bounding boxes of the detected faces.
+func detectFaces(img gocv.Mat, faceCascade gocv.CascadeClassifier) []image.Rectangle {
+	// Convert the image to grayscale
+	gray := gocv.NewMat()
+	defer gray.Close()
+	gocv.CvtColor(img, &gray, gocv.ColorBGRToGray)
+
+	// Detect faces in the grayscale image
+	faces := faceCascade.DetectMultiScaleWithParams(gray, 1.2, 3, 0, image.Pt(0, 0), image.Pt(0, 0))
+
+	return faces
+}
+
+func convertToIntSlice(input []int32) []int {
+	output := make([]int, len(input))
+	for i, v := range input {
+		output[i] = int(v)
+	}
+	return output
+}
